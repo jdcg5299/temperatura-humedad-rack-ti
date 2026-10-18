@@ -1,0 +1,27 @@
+# Servicio systemd: arranca enviar.py solo, al encender la Raspberry Pi.
+# Instalar (ver README/AGENTS de la Pi):
+#   sudo cp rack.service /etc/systemd/system/rack.service
+#   sudo systemctl daemon-reload
+#   sudo systemctl enable --now rack
+# Ver logs: journalctl -u rack -f
+
+[Unit]
+Description=Cliente DHT11 - monitoreo de temperatura y humedad del rack
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=pi
+WorkingDirectory=/home/pi/cliente-pi
+# Sin este archivo el servicio falla al arrancar: mejor avisar que seguir
+# mandando lecturas a la URL equivocada en silencio.
+EnvironmentFile=/home/pi/cliente-pi/rack.env
+# uv se instala en ~/.local/bin con el instalador oficial.
+# Requisito previo: haber corrido "uv sync" en /home/pi/cliente-pi.
+ExecStart=/home/pi/.local/bin/uv run enviar.py
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target
