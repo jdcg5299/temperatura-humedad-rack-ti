@@ -1,0 +1,23 @@
+# Python-generated files
+__pycache__/
+*.py[oc]
+build/
+dist/
+wheels/
+*.egg-info
+
+# Virtual environments
+.venv
+
+# Estado local de Vagrant (incluye la clave SSH privada de la VM)
+.vagrant/
+
+# Datos generados por el servidor (evidencia, no código)
+servidor/datos.db
+servidor/lecturas.csv
+
+# Archivo local con la IP del servidor: nunca va al repositorio
+cliente-pi/rack.env
+
+# Candado temporal de LibreOffice al abrir el CSV de evidencia
+.~lock.*#
