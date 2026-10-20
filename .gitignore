@@ -27,3 +27,4 @@ dashboard/node_modules/
 
 # Candado temporal de LibreOffice al abrir el CSV de evidencia
 .~lock.*#
+.archify/
