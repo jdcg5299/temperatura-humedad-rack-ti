@@ -22,5 +22,8 @@ cliente-pi/rack.env
 # Archivo local con credenciales (creado desde .env.example): nunca va al repositorio
 .env
 
+# Dashboard: dependencias de npm y el resultado del build (se genera, no se versiona)
+dashboard/node_modules/
+
 # Candado temporal de LibreOffice al abrir el CSV de evidencia
 .~lock.*#

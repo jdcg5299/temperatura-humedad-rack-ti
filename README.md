@@ -86,12 +86,23 @@ temperatura-humedad-rack-ti/
 │   ├── pyproject.toml       #   dependencias (uv)
 │   ├── rack.env.example     #   plantilla de configuración (sin IP real)
 │   └── rack.service         #   servicio systemd para arranque automático
+├── gateway/                 # Gateway: Arduino o simulado -> servidor
+│   └── gateway.py           #   envía lecturas al API (modo simulado o serial)
+├── dashboard/               # Dashboard web (Vite + React + TypeScript)
+│   ├── src/components/      #   barra de ventanas, gráfica, tabla, tema
+│   ├── src/App.tsx          #   estado, auto-refresco y layout
+│   ├── pruebas/evidencia.mjs#   prueba del dashboard en navegador (Playwright)
+│   └── package.json         #   dependencias (npm)
+├── docs/ui/                 # Especificaciones de interfaz
+│   └── segmented-time-range-bar.md
+├── docs/capturas/           # Evidencia en imágenes del dashboard
 └── servidor/                # Corre SOLO en la VM Ubuntu
-    ├── app.py               #   rutas Flask (POST/GET /api/lecturas)
+    ├── app.py               #   rutas Flask (POST/GET /api/lecturas) + dashboard
     ├── validacion.py        #   umbrales, validación y cálculo de estado
     ├── almacenamiento.py    #   doble guardado (SQLite/PostgreSQL) + CSV con lock
     ├── pyproject.toml       #   dependencias (uv)
-    └── .env.example         #   plantilla de configuración (sin claves reales)
+    ├── .env.example         #   plantilla de configuración (sin claves reales)
+    └── static/              #   resultado de `npm run build` (se genera, no se versiona)
 ```
 
 Los archivos `datos.db` y `lecturas.csv` se crean solos en `servidor/` al
@@ -127,10 +138,22 @@ Recibe una lectura del sensor.
 | `{"error": "temperatura debe ser un numero"}` | No es número (tampoco `true`/`false`) |
 | `{"error": "temperatura fuera del rango fisico 0.0-50.0 C"}` | Imposible para el DHT11 |
 
-### `GET /api/lecturas?limit=N`
+### `GET /api/lecturas?limit=N&desde=ISO`
 
 Las últimas `N` lecturas, de la más reciente a la más vieja. `limit` es
 opcional: por defecto `20`; debe ser un entero ≥ 1.
+
+`desde` es **opcional**: una fecha ISO en hora local del servidor (el mismo
+formato con que se guardan las fechas, `YYYY-MM-DDTHH:MM:SS`). Si viene, solo
+se devuelven las lecturas con `fecha >= desde`. Sirve para que el dashboard
+pida solo su ventana de tiempo en vez de toda la historia.
+
+| Caso | Resultado |
+|---|---|
+| `?limit=50` | Últimas 50 lecturas (sin `desde` no cambia nada) |
+| `?desde=2026-10-19T19:00:00` | Solo las lecturas desde esa hora |
+| `?desde=2026-10-19T19:00:00&limit=10` | Filtro por fecha y tope de filas, combinados |
+| `?desde=no-es-una-fecha` | `400` con `{"error": "desde debe ser una fecha ISO valida, ..."}` |
 
 ```json
 {
@@ -142,6 +165,23 @@ opcional: por defecto `20`; debe ser un entero ≥ 1.
       "fecha": "2026-10-18T19:39:60", "estado": "NORMAL" }
   ]
 }
+```
+
+### `GET /api/lecturas/csv`
+
+Descarga el **CSV completo** (`servidor/lecturas.csv`), tal como está en el
+servidor. No depende de la ventana de tiempo que elija el dashboard.
+
+| Respuesta | Cuándo |
+|---|---|
+| `200` con `Content-Disposition: attachment; filename=lecturas.csv` y `Content-Type: text/csv` | El archivo existe |
+| `404` con `{"error": "aun no existe el archivo lecturas.csv: no hay lecturas"}` | Todavía no se ha recibido ninguna lectura |
+
+La lectura del archivo se hace con el mismo lock que protege la escritura, así
+que la descarga nunca entrega una fila a medias.
+
+```bash
+curl -OJ http://IP_VM:5000/api/lecturas/csv    # -J usa el nombre del servidor
 ```
 
 ---
@@ -169,6 +209,57 @@ Consulta rápida desde el computador:
 cd servidor
 uv run python -c "import sqlite3; print(sqlite3.connect('datos.db').execute('SELECT * FROM lecturas').fetchall())"
 ```
+
+---
+
+## Dashboard
+
+Dashboard web (Vite + React + TypeScript + Tailwind) que muestra la evolución
+de temperatura y humedad. **No inventa datos**: todo lo que se ve viene del
+API del servidor (`GET /api/lecturas`).
+
+| Pieza | Qué hace |
+|---|---|
+| Barra de ventanas | Presets `15 min`, `1 h`, `6 h`, `24 h`, `7 d` (por defecto `1 h`). La ventana elegida manda sobre la gráfica y la tabla. |
+| Botón "Descargar CSV" | Junto a la barra de ventanas: baja el CSV completo del servidor (`GET /api/lecturas/csv`). |
+| Gráfica (Recharts) | Temperatura (eje izquierdo) y humedad (eje derecho). Si la ventana trae muchas lecturas, las agrupa por **promedio** en cubetas de tiempo para que no se sature. |
+| Tabla | Las 20 lecturas más recientes, sin agrupar, con su estado (`NORMAL` / `ALERTA`). |
+| Auto-refresco | Consulta el API cada 10 s; si falla, avisa y reintenta sin tumbar la página. |
+| Tema | Claro por defecto; el toggle activa el oscuro. Si el sistema está en oscuro (`prefers-color-scheme`), arranca en oscuro. |
+
+La barra de ventanas sigue la especificación `docs/ui/segmented-time-range-bar.md`
+(Variante A con `motion`): el indicador se desliza entre presets, es un
+`role="radiogroup"` que se recorre con flechas y Tab, el foco se ve, y con
+`prefers-reduced-motion` no hay animación.
+
+### Construir y servir
+
+El build se guarda en `servidor/static/`, que Flask sirve en `/`:
+
+```bash
+cd dashboard
+npm install
+npm run build          # genera ../servidor/static
+cd ../servidor
+uv run app.py          # abre http://IP_VM:5000/ en el navegador
+```
+
+### Desarrollo (con recarga en caliente)
+
+```bash
+# terminal 1: el API
+cd servidor && uv run app.py
+# terminal 2: el dashboard (proxy /api -> localhost:5000)
+cd dashboard && npm run dev
+```
+
+### Evidencia
+
+`npm run evidencia` abre el dashboard en un navegador real (Chromium de
+Playwright) y comprueba que la gráfica cambia al cambiar de ventana, que el
+indicador se desliza, que el auto-refresco sigue vivo, que las flechas
+navegan y que **no hay warnings en la consola**. Las capturas quedan en
+`docs/capturas/`.
 
 ---
 
@@ -228,6 +319,8 @@ se confundan con evidencia real.
 | Computador | Edición de código, git, pruebas `curl` | — |
 | VM Ubuntu (Vagrant) | Servidor Flask (desarrollo) | `cd /vagrant/servidor && uv run app.py` |
 | VM Ubuntu (Vagrant) | Servidor Flask (producción) | ver la sección siguiente |
+| VM Ubuntu (Vagrant) | Dashboard (build) | `cd /vagrant/dashboard && npm install && npm run build` |
+| Computador | Gateway simulado (para probar sin sensor) | `python3 gateway/gateway.py` (MODO=simulado) |
 | Raspberry Pi | Cliente del sensor DHT11 | `uv run enviar.py` o `systemctl status rack` |
 
 ---
@@ -258,7 +351,11 @@ Si se usa PostgreSQL, no olvides definir `DATABASE_URL` (export o
 - **Python 3.11+**, **Flask**, **SQLite** (stdlib) o **PostgreSQL** (psycopg 3),
   **gunicorn** para producción, **requests**.
 - **adafruit-circuitpython-dht** + Blinka para hablar con el DHT11 por GPIO.
-- **uv** para dependencias reproducibles (`pyproject.toml` + `uv.lock`).
+- **uv** para dependencias reproducibles de Python (`pyproject.toml` + `uv.lock`).
+- **Vite + React + TypeScript + Tailwind** para el dashboard, con **Recharts**
+  (gráfica), **motion** (animación de la barra de ventanas) y **lucide-react**
+  (iconos). Las fuentes van empaquetadas con npm: no se usa ningún CDN.
+- **npm** para las dependencias del dashboard (`package.json` + `package-lock.json`).
 - **Vagrant + VirtualBox** para la VM Ubuntu local.
 - **systemd** para arrancar el cliente con la Pi.
 

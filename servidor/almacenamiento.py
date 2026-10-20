@@ -107,11 +107,28 @@ def guardar(lectura: dict, fecha: str, estado: str) -> int:
     return id_
 
 
-def obtener_ultimas(limite: int) -> list[dict]:
-    """Las últimas lecturas, de la más reciente a la más vieja."""
+def obtener_ultimas(limite: int, desde: str | None = None) -> list[dict]:
+    """Las últimas lecturas, de la más reciente a la más vieja.
+
+    desde: fecha ISO opcional (hora local, como se guardan). Si viene,
+    solo se devuelven lecturas con fecha >= desde. Se compara como texto
+    porque el formato ISO (YYYY-MM-DDTHH:MM:SS) ordena igual que texto.
+    """
     if _url_postgres is None:
-        return _obtener_ultimas_sqlite(limite)
-    return _obtener_ultimas_postgres(limite)
+        return _obtener_ultimas_sqlite(limite, desde)
+    return _obtener_ultimas_postgres(limite, desde)
+
+
+def leer_csv() -> bytes:
+    """Contenido del CSV completo, listo para descargar.
+
+    Se lee con el mismo lock que usa guardar() para escribir: si una
+    petición llegara mientras se está escribiendo una fila, la descarga
+    no puede cortarla a medias. Si el archivo no existe todavía, el
+    error FileNotFoundError lo avisa (el API responde 404).
+    """
+    with _lock:
+        return RUTA_CSV.read_bytes()
 
 
 def _crear_tabla_sqlite() -> None:
@@ -188,34 +205,41 @@ def _insertar_postgres(lectura: dict, fecha: str, estado: str) -> int:
         return fila["id"]
 
 
-def _obtener_ultimas_sqlite(limite: int) -> list[dict]:
+def _obtener_ultimas_sqlite(limite: int, desde: str | None) -> list[dict]:
+    # El filtro por fecha se arma aparte porque SQLite usa ? y PostgreSQL %s.
+    filtro = "WHERE fecha >= ?" if desde is not None else ""
     con = sqlite3.connect(RUTA_DB)
     try:
         con.row_factory = sqlite3.Row
+        parametros = ((desde,) if desde is not None else ()) + (limite,)
         filas = con.execute(
-            """
+            f"""
             SELECT id, dispositivo, temperatura, humedad, fecha, estado
             FROM lecturas
+            {filtro}
             ORDER BY id DESC
             LIMIT ?
             """,
-            (limite,),
+            parametros,
         ).fetchall()
         return [dict(fila) for fila in filas]
     finally:
         con.close()
 
 
-def _obtener_ultimas_postgres(limite: int) -> list[dict]:
+def _obtener_ultimas_postgres(limite: int, desde: str | None) -> list[dict]:
+    filtro = "WHERE fecha >= %s" if desde is not None else ""
     with _conectar_postgres() as con:
+        parametros = ((desde,) if desde is not None else ()) + (limite,)
         filas = con.execute(
-            """
+            f"""
             SELECT id, dispositivo, temperatura, humedad, fecha, estado
             FROM lecturas
+            {filtro}
             ORDER BY id DESC
             LIMIT %s
             """,
-            (limite,),
+            parametros,
         ).fetchall()
         return filas
 

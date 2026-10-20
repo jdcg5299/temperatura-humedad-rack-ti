@@ -1,0 +1,6 @@
+/* Fuente empaquetada con npm: se sirve desde el propio build (sin CDN). */
+@import '@fontsource-variable/inter';
+
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
