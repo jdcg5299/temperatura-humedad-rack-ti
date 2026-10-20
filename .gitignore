@@ -19,5 +19,8 @@ servidor/lecturas.csv
 # Archivo local con la IP del servidor: nunca va al repositorio
 cliente-pi/rack.env
 
+# Archivo local con credenciales (creado desde .env.example): nunca va al repositorio
+.env
+
 # Candado temporal de LibreOffice al abrir el CSV de evidencia
 .~lock.*#

@@ -89,8 +89,9 @@ temperatura-humedad-rack-ti/
 └── servidor/                # Corre SOLO en la VM Ubuntu
     ├── app.py               #   rutas Flask (POST/GET /api/lecturas)
     ├── validacion.py        #   umbrales, validación y cálculo de estado
-    ├── almacenamiento.py    #   doble guardado SQLite + CSV con lock
-    └── pyproject.toml       #   dependencias (uv)
+    ├── almacenamiento.py    #   doble guardado (SQLite/PostgreSQL) + CSV con lock
+    ├── pyproject.toml       #   dependencias (uv)
+    └── .env.example         #   plantilla de configuración (sin claves reales)
 ```
 
 Los archivos `datos.db` y `lecturas.csv` se crean solos en `servidor/` al
@@ -185,6 +186,32 @@ El cliente se configura **sin tocar código** (la IP nunca vive en el repositori
 En la Pi estas variables se cargan desde `cliente-pi/rack.env` (creado a partir
 de `rack.env.example`) mediante el servicio systemd.
 
+### Base de datos del servidor (SQLite o PostgreSQL)
+
+El servidor también se configura **sin tocar código**. Si existe la variable
+de entorno `DATABASE_URL`, las lecturas se guardan en **PostgreSQL** (con
+psycopg 3) en vez de SQLite; si no existe, sigue usando `datos.db` (SQLite).
+El CSV (`lecturas.csv`) se escribe igual en ambos modos.
+
+| Variable | Default | Descripción |
+|---|---|---|
+| `DATABASE_URL` | *(sin valor: SQLite)* | `postgresql://usuario:clave@host:5432/nombre` |
+
+Para no poner la clave en el código ni en el repositorio, el servidor lee
+`servidor/.env` (creado a partir de `servidor/.env.example`) si existe; las
+variables que ya estén definidas en el entorno ganan sobre el archivo. Si
+`DATABASE_URL` está definida pero el servidor no logra conectarse, el programa
+**falla al arrancar** con un mensaje claro (sin mostrar la clave) en vez de
+perder lecturas en silencio.
+
+Ejemplo de arranque con PostgreSQL (en la VM):
+
+```bash
+cd /vagrant/servidor
+export DATABASE_URL="postgresql://rack:LA_CLAVE@localhost:5432/rack"
+uv run app.py
+```
+
 ### El modo simulado
 
 `MODO=simulado` envía una lectura de ejemplo **únicamente** para comprobar la
@@ -199,14 +226,37 @@ se confundan con evidencia real.
 | Entorno | Qué corre | Comando |
 |---|---|---|
 | Computador | Edición de código, git, pruebas `curl` | — |
-| VM Ubuntu (Vagrant) | Servidor Flask | `cd /vagrant/servidor && uv run app.py` |
+| VM Ubuntu (Vagrant) | Servidor Flask (desarrollo) | `cd /vagrant/servidor && uv run app.py` |
+| VM Ubuntu (Vagrant) | Servidor Flask (producción) | ver la sección siguiente |
 | Raspberry Pi | Cliente del sensor DHT11 | `uv run enviar.py` o `systemctl status rack` |
+
+---
+
+## Producción con gunicorn
+
+`app.run(...)` es para desarrollo. Para producción se usa **gunicorn**
+(dependencia ya declarada con `uv`):
+
+```bash
+cd /vagrant/servidor
+uv run gunicorn -w 1 --threads 4 -b 0.0.0.0:5000 app:app
+```
+
+**Importante: UN SOLO worker (`-w 1`).** El `threading.Lock` que protege la
+escritura del CSV vive en la memoria de **un proceso**: con dos o más workers
+habría varios candados (uno por proceso) y el CSV podría corromperse. Con un
+worker y `--threads 4` se atienden peticiones en paralelo pero sigue habiendo
+un único candado.
+
+Si se usa PostgreSQL, no olvides definir `DATABASE_URL` (export o
+`servidor/.env`) antes de lanzar gunicorn.
 
 ---
 
 ## Tecnologías
 
-- **Python 3.11+**, **Flask**, **SQLite** (stdlib), **requests**.
+- **Python 3.11+**, **Flask**, **SQLite** (stdlib) o **PostgreSQL** (psycopg 3),
+  **gunicorn** para producción, **requests**.
 - **adafruit-circuitpython-dht** + Blinka para hablar con el DHT11 por GPIO.
 - **uv** para dependencias reproducibles (`pyproject.toml` + `uv.lock`).
 - **Vagrant + VirtualBox** para la VM Ubuntu local.
