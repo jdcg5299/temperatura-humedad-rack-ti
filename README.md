@@ -1,12 +1,10 @@
 # Monitor de temperatura y humedad para un rack de TI
 
-Un DHT11 dentro del rack mide temperatura y humedad reales. Un **Arduino Uno** lo lee
-por el pin 2 y entrega los datos por el **puerto serial USB (9600 baudios)** a un
-**gateway** en Python que corre en un portátil Windows. El gateway los publica por
-**HTTP (JSON)** en un **servidor Flask** desplegado en una **EC2 de AWS**, donde cada
-lectura queda guardada en dos lugares: un **CSV** en el disco de la EC2 y una base
-**PostgreSQL** en un **RDS privado**. Un **dashboard web** muestra la gráfica, la
-tabla de lecturas recientes y un botón para bajar el CSV.
+Un DHT11 dentro del rack mide temperatura y humedad reales. Una **Raspberry Pi 3** lo
+lee por **GPIO4** y envía cada lectura por **HTTP (JSON)** a un **servidor Flask**
+desplegado en una **EC2 de AWS**. Cada lectura queda en dos lugares: un **CSV** en el
+disco de la EC2 y una base **PostgreSQL** en un **RDS privado**. Un **dashboard web**
+muestra la gráfica, la tabla de lecturas recientes y un botón para bajar el CSV.
 
 Es un proyecto académico de IoT con hardware real y despliegue en la nube.
 
@@ -16,26 +14,44 @@ Es un proyecto académico de IoT con hardware real y despliegue en la nube.
 
 El diagrama interactivo (zoom, resaltar rutas, modo oscuro) está en
 [`diagrams/arquitectura.html`](diagrams/arquitectura.html). El despliegue vive en la
-región `us-east-2` (Ohio), dentro de una VPC propia con dos subredes públicas y dos
-privadas: la EC2 vive en la pública; el RDS, en una privada sin ruta a internet.
+región `us-east-2` (Ohio), en una VPC propia con dos subredes públicas y dos privadas:
+la EC2 vive en la pública; el RDS, en una privada sin ruta a internet.
+
+El servidor no distingue el origen de una lectura: lo único que acepta es un
+`POST /api/lecturas` con `dispositivo`, `temperatura` y `humedad`. Quién manda qué
+etiqueta queda en el campo `dispositivo`.
+
+## Hardware del dispositivo
+
+| Señal del DHT11 | Pin de la Pi              |
+| --------------- | ------------------------- |
+| 3,3 V           | pin físico 1              |
+| DATA            | GPIO4 (pin físico 7)      |
+| GND             | pin físico 9              |
+
+El código abre el sensor como `board.D4` con `use_pulseio=False`: en la Pi, la
+librería Blinka mide el DHT11 por bit-banging porque `pulseio` no está soportado.
+
+El DHT11 falla de vez en cuando al medir (es normal en este sensor). El cliente
+captura ese error, avisa por consola y reintenta en el siguiente ciclo: el programa
+no se cae y solo se registran lecturas completas.
 
 ## Cómo funciona el flujo
 
-1. El DHT11 (pin 2, con 5 V y GND) responde a cada lectura del Arduino.
-2. El Arduino escribe por el serial (`COM7` a 9600 en el gateway) el JSON
-   `{"t": 24.9, "h": 44.0}`.
-3. `gateway.py` recibe esa línea, la convierte en
-   `{ "dispositivo": ..., "temperatura": ..., "humedad": ... }` y hace `POST` al
-   API en la IP pública de la EC2 (puerto 5000).
-4. El servidor valida la lectura contra los rangos del DHT11, calcula el estado
+1. El Pi mide el DHT11 en GPIO4. Si la lectura falla, avisa y reintenta en el
+   siguiente ciclo.
+2. `cliente-pi/enviar.py` arma el JSON
+   `{ "dispositivo": "rack-pi-01", "temperatura": ..., "humedad": ... }` y hace
+   `POST` al API en la IP elástica de la EC2 (puerto 5000). La Pi tiene su propia
+   conexión de red: manda directo, sin equipo intermedio.
+3. El servidor valida la lectura contra los rangos del DHT11, calcula el estado
    `NORMAL` o `ALERTA`, pone la fecha y guarda la fila en el CSV y en PostgreSQL
    dentro de un candado (un worker: un solo candado para todo el proceso).
-5. El dashboard consulta `GET /api/lecturas?limit=N&desde=ISO` cada 10 segundos,
+4. El dashboard consulta `GET /api/lecturas?limit=N&desde=ISO` cada 10 segundos,
    dibuja la gráfica y la tabla; el botón **Descargar CSV** hace
    `GET /api/lecturas/csv`.
-6. Para mantenimiento el administrador entra por `SSH` al puerto 22 de la EC2
-   (restringido a su propia IP). Si el sensor, el serial o la red fallan, el
-   gateway avisa por consola, espera y reintenta: el bucle se mantiene vivo.
+5. Para mantenimiento el administrador entra por `SSH` al puerto 22 de la EC2,
+   restringido a su propia IP.
 
 La única entrada pública del servidor es el puerto 5000. La base de datos queda
 protegida dos veces: su subred no tiene salida a internet y el `sg-db` solo acepta
@@ -43,32 +59,32 @@ tráfico originado en `sg-web`.
 
 ## Umbrales
 
-| Magnitud      | Rango normal | Rango físico del DHT11 |
-| ------------- | ------------ | ---------------------- |
-| Temperatura   | 18 – 27 °C   | 0 – 50 °C (±2 °C)      |
-| Humedad       | 40 – 60 %    | 0 – 100 % (±5 %)       |
+| Magnitud    | Rango normal | Rango físico del DHT11 |
+| ----------- | ------------ | ---------------------- |
+| Temperatura | 18 – 27 °C   | 0 – 50 °C (±2 °C)      |
+| Humedad     | 40 – 60 %    | 0 – 100 % (±5 %)       |
 
 Dentro del rango normal el estado es `NORMAL`; fuera de él, `ALERTA` (la lectura
 igual se guarda). Fuera del rango físico es imposible para un DHT11 y el servidor
 rechaza la lectura con `400`.
 
-## Correr en local (SQLite, gateway simulado)
+## Correr en local (SQLite, cliente simulado)
 
 Sin más configuración el servidor guarda en SQLite (`servidor/datos.db`) y escribe
-el CSV. Se necesita solo [uv](https://docs.astral.sh/uv/) y Node para el dashboard.
+el CSV. Se necesita [uv](https://docs.astral.sh/uv/) y Node para el dashboard.
 
 ```bash
 # servidor (http://localhost:5000)
 cd servidor && uv sync && uv run app.py
 
-# gateway simulado (etiqueta rack-01-simulado, sin sensor real)
-uv run --with requests --with pyserial gateway/gateway.py
+# cliente simulado en el computador (sin GPIO, etiqueta rack-01-simulado)
+cd cliente-pi && uv sync && MODO=simulado uv run enviar.py
 
 # dashboard compilado (Flask lo sirve en /)
 cd dashboard && npm install && npm run build
 ```
 
-Prueba rápida del API sin gateway:
+Prueba rápida del API sin cliente:
 
 ```bash
 curl -X POST http://localhost:5000/api/lecturas \
@@ -82,6 +98,34 @@ Para desarrollo del dashboard con recarga en caliente:
 cd servidor && uv run app.py                     # terminal 1
 cd dashboard && npm run dev                      # terminal 2 (proxy /api -> :5000)
 ```
+
+## Correr en la Pi
+
+En la Pi, desde la carpeta del proyecto:
+
+```bash
+SERVIDOR_URL=http://IP_ELASTICA:5000/api/lecturas DISPOSITIVO=rack-pi-01 \
+  MODO=sensor INTERVALO_SEGUNDOS=5 \
+  uv run --python 3.12 --with RPi.GPIO enviar.py
+```
+
+`--with RPi.GPIO` hace falta porque la librería del sensor (Blinka) lo pide y el
+entorno que `uv` prepara para este proyecto no lo trae.
+
+Variables que entiende `enviar.py` (todas por entorno; la IP del servidor nunca
+vive en el código):
+
+| Variable             | Default                          | Descripción                          |
+| -------------------- | -------------------------------- | ------------------------------------ |
+| `SERVIDOR_URL`       | `http://127.0.0.1:5000/api/lecturas` | Endpoint completo del API         |
+| `DISPOSITIVO`        | `rack-01`                        | Nombre que viaja en cada lectura     |
+| `MODO`               | `sensor`                         | `sensor` = DHT11 real; `simulado` = prueba de red |
+| `INTERVALO_SEGUNDOS` | `10`                             | Segundos entre intentos (mínimo 1: el DHT11 hasta una lectura por segundo) |
+
+`MODO=simulado` existe para ensayar la ruta de red antes de tener la Pi encendida.
+No es evidencia: el dispositivo viaja etiquetado como `rack-01-simulado` y se
+distingue de las lecturas reales. Los import de hardware están dentro de la función
+que crea el sensor, por eso el modo simulado corre sin GPIO.
 
 ## Despliegue en AWS
 
@@ -106,38 +150,11 @@ El servidor encuentra la base de datos con la variable `DATABASE_URL` (formato
 clave nunca va al repositorio ni se pega en el código. Si la conexión falla, el
 servidor muere al arrancar con un mensaje claro en lugar de perder lecturas.
 
-## Configuración del gateway
-
-`gateway.py` no toca código para cambiarse de modo: todo se define con variables
-de entorno:
-
-| Variable            | Default                             | Descripción                                  |
-| ------------------- | ----------------------------------- | -------------------------------------------- |
-| `SERVIDOR_URL`      | `http://localhost:5000/api/lecturas` | Endpoint completo del API                   |
-| `DISPOSITIVO`       | `rack-01`                           | Nombre con el que viaja cada lectura         |
-| `INTERVALO_SEGUNDOS`| `5`                                 | Segundos entre envíos                        |
-| `MODO`              | `simulado`                          | `serial` = Arduino real; `simulado` = prueba |
-| `PUERTO_SERIAL`     | `COM3`                              | Puerto del Arduino (`COM7` en la instalación real) |
-
-El gateway es un solo archivo sin su propio `pyproject.toml`, así que sus
-dependencias (`requests` y `pyserial`) se piden en la línea con `uv --with`.
-
-Modo real (con el Arduino conectado por USB):
-
-```bash
-MODO=serial PUERTO_SERIAL=COM7 SERVIDOR_URL=http://18.189.203.243:5000/api/lecturas \
-  uv run --with requests --with pyserial gateway/gateway.py
-```
-
-`MODO=simulado` existe para ensayar la ruta de red sin hardware. Nunca genera
-evidencia: el dispositivo viaja etiquetado como `rack-01-simulado` y así se distingue
-de las lecturas reales.
-
 ## Configuración del servidor
 
-| Variable      | Default                                      | Descripción                                  |
-| ------------- | -------------------------------------------- | -------------------------------------------- |
-| `DATABASE_URL` | *(sin valor: SQLite)*                       | URL de PostgreSQL para guardar las lecturas  |
+| Variable       | Default                                   | Descripción                                 |
+| -------------- | ----------------------------------------- | ------------------------------------------- |
+| `DATABASE_URL` | *(sin valor: SQLite)*                     | URL de PostgreSQL para guardar las lecturas |
 
 `app.py` atiende el puerto 5000 en `0.0.0.0` (desarrollo y gunicorn); no hay variable
 para cambiarlo. El CSV (`lecturas.csv`) se escribe igual con SQLite o con PostgreSQL;
@@ -151,7 +168,7 @@ Base: `http://18.189.203.243:5000` (en local, `http://localhost:5000`).
 ### `POST /api/lecturas`
 
 ```json
-{ "dispositivo": "rack-01", "temperatura": 24.0, "humedad": 50.0 }
+{ "dispositivo": "rack-pi-01", "temperatura": 24.0, "humedad": 50.0 }
 ```
 
 `201` con el id, el estado y la fecha si la lectura se guardó:
@@ -191,7 +208,7 @@ curl -OJ http://18.189.203.243:5000/api/lecturas/csv   # -J respeta el nombre de
   diseño del ejercicio. Cualquier conocedor de la IP puede enviar lecturas.
 - El CSV vive en el disco de una sola EC2: la fuente de verdad es la base de datos
   en RDS; si la máquina se pierde, el CSV se va con ella.
-- El gateway corre en un portátil Windows: si se apaga, dejan de llegar lecturas
+- La Pi es el único punto de medición: si se apaga o pierde red, no llegan lecturas
   nuevas (el sistema no inventa datos para tapar el hueco).
 - Una sola EC2 sin balanceador: con ese tamaño es suficiente y más simple.
 
