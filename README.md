@@ -8,6 +8,88 @@ muestra la gráfica, la tabla de lecturas recientes y un botón para bajar el CS
 
 Es un proyecto académico de IoT con hardware real y despliegue en la nube.
 
+## Caso de uso: por qué vigilar un rack de TI
+
+Un **rack** es el armario metálico donde una empresa guarda sus servidores, switches
+y equipos de red. Ahí "vive" lo que hace funcionar el correo, la página web, el
+sistema de facturación o el wifi de la oficina. Esos equipos trabajan día y noche y
+producen mucho calor, así que el aire que los rodea importa tanto como los equipos
+mismos.
+
+### El riesgo es real, incluso para los más grandes
+
+- **El enfriamiento es la segunda causa de caídas en centros de datos.** En la
+  encuesta 2024 de Uptime Institute, el 19 % de los operadores dijo que su última
+  caída grave se debió a fallas de enfriamiento; solo la energía eléctrica causó
+  más ([Ocolo, resumen de la encuesta de Uptime][uptime-19]).
+- **Le pasó a Google y a Oracle.** El 19 de julio de 2022, con Londres a 40 °C,
+  fallaron los sistemas de enfriamiento de ambos. Google tuvo que apagar parte de su
+  zona `europe-west2-a` "para evitar daños en los equipos", y Oracle apagó parte de
+  su infraestructura "para prevenir fallas de hardware sin control". Los clientes
+  perdieron acceso a sus máquinas durante horas ([BleepingComputer][heatwave]).
+- **Una caída cuesta mucho.** Más del 20 % de las caídas reportadas a Uptime en
+  2024 costaron más de un millón de dólares ([FOSS Force][uptime-costos]). Un estudio
+  anterior del Ponemon Institute calculó, en promedio, unos 7.900 dólares por cada
+  minuto sin servicio ([DCD][ponemon]).
+
+Una empresa mediana no tiene los sistemas de respaldo de Google. Su "centro de
+datos" suele ser un cuarto pequeño con un rack y un aire acondicionado. Si ese aire
+se daña un viernes por la noche, nadie se entera hasta el lunes, cuando ya no
+funciona nada.
+
+### Qué pasa con la temperatura y la humedad
+
+**Si hace demasiado calor**, los equipos se protegen solos: primero bajan su
+rendimiento (todo se vuelve lento) y luego se apagan de golpe. Eso fue exactamente
+lo que hicieron Google y Oracle en 2022, a mayor escala.
+
+**La humedad también importa, en los dos sentidos.** La guía de ASHRAE lo advierte
+expresamente ([ASHRAE TC 9.9, tarjeta de referencia 2021][ashrae]):
+
+- **Muy alta:** si el aire tiene contaminantes, la humedad alta acelera la
+  **corrosión** de los circuitos. Por eso ASHRAE recomienda bajarla al 50 % o menos
+  cuando se detecta corrosión.
+- **Muy baja:** el aire seco aumenta el riesgo de **descargas de electricidad
+  estática**, que pueden dañar componentes. ASHRAE pide pulseras antiestáticas y
+  pisos conductivos cuando la humedad es baja.
+
+### Qué aporta este sistema
+
+El problema es que **nadie lo ve venir**: casi ningún cuarto de servidores tiene a
+alguien mirando un termómetro. Este sistema pone un sensor dentro del rack que mide
+cada pocos segundos, guarda el histórico y marca cada lectura como `NORMAL` o
+`ALERTA`. Así se puede:
+
+- **Actuar antes de que falle algo:** una `ALERTA` en el dashboard es la señal para
+  revisar el aire acondicionado antes de perder un servidor.
+- **Encontrar patrones:** la gráfica muestra, por ejemplo, si la temperatura sube
+  todas las tardes o cada vez que se apaga el aire el fin de semana.
+- **Tener evidencia:** el CSV y la base de datos sirven para justificar un
+  mantenimiento o una compra (un mejor aire acondicionado, otra ubicación del rack).
+
+### De dónde salen los rangos "normales"
+
+- **Temperatura, 18–27 °C:** es exactamente el rango **recomendado** por ASHRAE para
+  todos los equipos de TI enfriados por aire ([ASHRAE][ashrae]). ASHRAE es la
+  referencia más usada para centros de datos.
+- **Humedad, 40–60 %:** ASHRAE define la humedad recomendada por punto de rocío
+  (–9 °C a 15 °C) con un máximo de 70 % de humedad relativa, o de 50 % si hay
+  contaminantes. Aquí se usa un margen más conservador, fácil de leer en el sensor y
+  lejos de los dos extremos (corrosión y estática).
+
+Los valores exactos que usa el servidor están en la sección [Umbrales](#umbrales).
+
+**Una aclaración honesta:** el DHT11 es un sensor económico y educativo (±2 °C y
+±5 % de humedad). Alcanza para mostrar el concepto completo de punta a punta, pero en
+un centro de datos real se usaría un sensor más preciso y alertas automáticas (correo
+o mensaje) además del dashboard.
+
+[uptime-19]: https://blog.ocolo.io/powerful-results-from-uptime-intelligences-2024-annual-data-center-resiliency-survey/
+[uptime-costos]: https://fossforce.com/2024/08/power-issues-cause-most-data-center-outages-followed-by-cooling/
+[heatwave]: https://www.bleepingcomputer.com/news/security/uk-heat-wave-causes-google-and-oracle-cloud-outages
+[ponemon]: https://www.datacenterdynamics.com/en/news/one-minute-of-data-center-downtime-costs-us7900-on-average/
+[ashrae]: https://www.ashrae.org/file%20library/technical%20resources/bookstore/supplemental%20files/therm-gdlns-5th-r-e-refcard.pdf
+
 ## Arquitectura
 
 ![Diagrama de arquitectura](diagrams/arquitectura.png)
