@@ -6,12 +6,15 @@ construido en servidor/static/ (si existe).
 """
 
 from datetime import datetime
+from zoneinfo import ZoneInfo
 from pathlib import Path
 
 from flask import Flask, Response, jsonify, request, send_from_directory
 
 import almacenamiento
 import validacion
+
+ZONA = ZoneInfo("America/Bogota")
 
 app = Flask(__name__)
 
@@ -49,7 +52,7 @@ def recibir_lectura():
 
     # La fecha la pone el servidor: la Pi no tiene reloj de respaldo
     # y su hora puede estar desincronizada.
-    fecha = datetime.now().isoformat(timespec="seconds")
+    fecha = datetime.now(ZONA).replace(tzinfo=None).isoformat(timespec="seconds")
     estado = validacion.calcular_estado(lectura["temperatura"], lectura["humedad"])
     id_ = almacenamiento.guardar(lectura, fecha, estado)
 
@@ -93,7 +96,7 @@ def _normalizar_desde(texto: str) -> str | None:
     # Si viene con zona horaria se pasa a la hora local del servidor,
     # que es como se guardan las fechas (isoformat sin zona).
     if fecha.tzinfo is not None:
-        fecha = fecha.astimezone().replace(tzinfo=None)
+        fecha = fecha.astimezone(ZONA).replace(tzinfo=None)
     return fecha.isoformat(timespec="seconds")
 
 
