@@ -1,0 +1,5 @@
+.venv
+.env
+datos.db
+lecturas.csv
+__pycache__
